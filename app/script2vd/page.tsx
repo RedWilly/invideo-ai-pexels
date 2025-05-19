@@ -32,16 +32,46 @@ export default function Script2VD() {
 
   const handleSubmit = async () => {
     setIsGenerating(true);
-    // Simulate progress
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 10;
-      setProgress(progress);
-      if (progress >= 100) {
-        clearInterval(interval);
+    
+    try {
+      // Start progress animation
+      let progress = 0;
+      const interval = setInterval(() => {
+        progress += 5;
+        if (progress <= 90) {
+          setProgress(progress);
+        }
+      }, 500);
+      
+      // Call the API endpoint with the script and selected voice
+      const response = await fetch('/api/process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          script: script,
+          tags: tags.split(',').map(tag => tag.trim()),
+          voiceId: selectedVoice
+        }),
+      });
+      
+      const result = await response.json();
+      
+      // Complete the progress bar
+      clearInterval(interval);
+      setProgress(100);
+      
+      // Wait a moment before redirecting
+      setTimeout(() => {
         router.push('/complete');
-      }
-    }, 1000);
+      }, 500);
+      
+    } catch (error) {
+      console.error('Error generating video:', error);
+      // Handle error - could show an error message to the user
+      setIsGenerating(false);
+    }
   };
 
   return (
