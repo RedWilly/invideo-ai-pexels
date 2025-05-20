@@ -1,14 +1,7 @@
 'use client';
 
 import { Card } from '@/components/ui/card';
-
-interface VideoPoint {
-  text: string;
-  videoId: string;
-  videoThumbnail: string;
-  startTime: number;
-  endTime: number;
-}
+import { VideoPoint } from '@/lib/types/video';
 
 interface VideoSectionsProps {
   videoPoints: VideoPoint[];
@@ -45,8 +38,32 @@ export function VideoSections({ videoPoints, onSectionSelect }: VideoSectionsPro
 }
 
 // Helper function to format time in a more readable format
-function formatTime(timeInSeconds: number): string {
-  const minutes = Math.floor(timeInSeconds / 60);
-  const seconds = Math.floor(timeInSeconds % 60);
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+// function formatTime(timeInMilliseconds: number): string {
+//   // Convert milliseconds to seconds
+//   const totalSeconds = Math.floor(timeInMilliseconds / 1000);
+//   const minutes = Math.floor(totalSeconds / 60);
+//   const seconds = Math.floor(totalSeconds % 60);
+//   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+// }
+function formatTime(timeInMilliseconds: number): string {
+  const totalSeconds = Math.floor(timeInMilliseconds / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    // Show hh:mm:ss
+    return [
+      hours.toString().padStart(2, '0'),
+      minutes.toString().padStart(2, '0'),
+      seconds.toString().padStart(2, '0')
+    ].join(':');
+  } else {
+    // Show mm:ss
+    return [
+      minutes.toString(),
+      seconds.toString().padStart(2, '0')
+    ].join(':');
+  }
 }
+

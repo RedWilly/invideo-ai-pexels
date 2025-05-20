@@ -1,65 +1,40 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 // Import our modular components
 import { PageContainer } from '@/components/layout';
 import { VideoPlayer, VideoSections } from '@/components/features/video-player';
+import { VideoData } from '@/lib/types/video';
+import { useVideoContext } from '@/lib/context/video-context';
 
-interface VideoPoint {
-  text: string;
-  videoId: string;
-  videoThumbnail: string;
-  startTime: number;
-  endTime: number;
-}
-
-interface VideoSection {
-  sectionId: string;
-  points: VideoPoint[];
-  audioUrl: string;
-  voiceOverId: string;
-}
-
-interface ApiResponse {
-  success: boolean;
-  data: VideoSection[];
-}
+// Using shared types from lib/types/video.ts
 
 export default function Complete() {
+  const router = useRouter();
+  const { videoData } = useVideoContext();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [videoPoints, setVideoPoints] = useState<VideoPoint[]>([]);
-  const [audioUrl, setAudioUrl] = useState<string>('');
   
-  // Fetch data from the API when the component mounts
+  // Check if we have video data in context
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const response = await fetch('/api/process');
-        
-        if (!response.ok) {
-          throw new Error(`API request failed with status ${response.status}`);
-        }
-        
-        const data: ApiResponse = await response.json();
-        
-        if (data.success && data.data && data.data.length > 0) {
-          setVideoPoints(data.data[0].points);
-          setAudioUrl(data.data[0].audioUrl);
-        } else {
-          throw new Error('No video data available');
-        }
-      } catch (err) {
-        console.error('Error fetching video data:', err);
-        setError('Failed to load video data. Please try again later.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+    // If no video data, redirect back to script2vd page
+    if (!videoData) {
+      console.log('No video data found, redirecting to script input');
+      router.push('/script2vd');
+      return;
+    }
     
-    fetchData();
-  }, []);
+    // If we have video data, we're ready to display it
+    if (videoData.success && videoData.data && videoData.data.length > 0) {
+      console.log('Video data loaded from context:', videoData);
+      setIsLoading(false);
+    } else {
+      setError('Invalid video data format');
+      setIsLoading(false);
+    }
+  }, [videoData, router]);
   
   // Handle section selection
   const handleSectionSelect = (index: number) => {
@@ -92,14 +67,11 @@ export default function Complete() {
         </div>
       ) : (
         <>
-          <VideoPlayer 
-            videoPoints={videoPoints} 
-            audioUrl={audioUrl} 
-          />
+          <VideoPlayer videoData={videoData!} />
 
           <div className="mt-8">
             <VideoSections 
-              videoPoints={videoPoints} 
+              videoPoints={videoData!.data.flatMap(section => section.points)} 
               onSectionSelect={handleSectionSelect} 
             />
           </div>

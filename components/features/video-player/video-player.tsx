@@ -1,74 +1,143 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Card } from '@/components/ui/card';
 import { Play, Pause, Volume2, Download, Share2 } from 'lucide-react';
-
-interface VideoPoint {
-  text: string;
-  videoId: string;
-  videoThumbnail: string;
-  startTime: number;
-  endTime: number;
-}
+import { DiffusionStudioService } from '@/lib/services/diffusion-studio';
+import { VideoData, VideoSection, VideoPoint } from '@/lib/types/video';
 
 interface VideoPlayerProps {
-  videoPoints: VideoPoint[];
-  audioUrl?: string;
+  videoData: VideoData;
 }
 
-export function VideoPlayer({ videoPoints, audioUrl }: VideoPlayerProps) {
+export function VideoPlayer({ videoData }: VideoPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(1);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  const playerRef = useRef<HTMLDivElement>(null);
+  const diffusionStudioRef = useRef<DiffusionStudioService | null>(null);
 
-  const totalDuration = videoPoints.reduce(
-    (acc, point) => acc + (point.endTime - point.startTime),
-    0
-  );
+  // Calculate total duration from all sections
+  const totalDuration = videoData.data.reduce((sectionAcc, section) => {
+    return sectionAcc + section.points.reduce(
+      (pointAcc, point) => pointAcc + (point.endTime - point.startTime),
+      0
+    );
+  }, 0);
+
+  // Initialize Diffusion Studio service
+  useEffect(() => {
+    if (!videoData || !videoData.success || !videoData.data.length) return;
+    
+    const initDiffusionStudio = async () => {
+      try {
+        setIsLoading(true);
+        
+        // Initialize Diffusion Studio service
+        const diffusionStudio = new DiffusionStudioService();
+        diffusionStudioRef.current = diffusionStudio;
+        
+        // Attach player if ref is available
+        if (playerRef.current) {
+          diffusionStudio.attachPlayer(playerRef.current);
+        }
+        
+        // Process all video data
+        await diffusionStudio.processVideoData(videoData);
+        
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Error initializing Diffusion Studio:', err);
+        setError('Failed to initialize video player');
+        setIsLoading(false);
+      }
+    };
+    
+    initDiffusionStudio();
+    
+    // Cleanup function
+    return () => {
+      // Any cleanup needed for Diffusion Studio
+    };
+  }, [videoData]);
+
+  // Handle time updates
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isPlaying && diffusionStudioRef.current) {
+        // Get current time from Diffusion Studio
+        const composition = diffusionStudioRef.current.getComposition();
+        if (composition) {
+          const time = composition.currentTime * 1000; // Convert to ms
+          setCurrentTime(time);
+        }
+      }
+    }, 100);
+    
+    return () => clearInterval(interval);
+  }, [isPlaying]);
 
   const togglePlayPause = () => {
-    if (videoRef.current) {
+    if (diffusionStudioRef.current) {
       if (isPlaying) {
-        videoRef.current.pause();
+        diffusionStudioRef.current.pause();
       } else {
-        videoRef.current.play();
+        diffusionStudioRef.current.play();
       }
       setIsPlaying(!isPlaying);
     }
   };
 
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+  const handleSeek = (value: number[]) => {
+    const newTime = value[0];
+    setCurrentTime(newTime);
+    if (diffusionStudioRef.current) {
+      diffusionStudioRef.current.seekTo(newTime);
     }
   };
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
     setVolume(newVolume);
-    if (videoRef.current) {
-      videoRef.current.volume = newVolume;
+    // Set volume in Diffusion Studio if applicable
+    // This might require additional implementation in the DiffusionStudioService
+  };
+
+  const handleDownload = async () => {
+    if (diffusionStudioRef.current) {
+      try {
+        const filename = `video_${Date.now()}.mp4`;
+        await diffusionStudioRef.current.renderToFile(filename);
+        alert(`Video downloaded as ${filename}`);
+      } catch (err) {
+        console.error('Error downloading video:', err);
+        alert('Failed to download video');
+      }
     }
   };
 
   return (
     <Card className="overflow-hidden">
       <div className="relative aspect-video bg-black">
-        {/* Video element will be implemented with actual video URLs */}
-        <div className="w-full h-full flex items-center justify-center text-white">
-          <img 
-            src={videoPoints[0]?.videoThumbnail} 
-            alt="Video thumbnail" 
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-            <Play className="h-16 w-16" />
+        {isLoading ? (
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin"></div>
           </div>
-        </div>
+        ) : error ? (
+          <div className="w-full h-full flex items-center justify-center text-red-500">
+            <p>{error}</p>
+          </div>
+        ) : (
+          <div 
+            ref={playerRef} 
+            className="w-full h-full"
+          ></div>
+        )}
       </div>
 
       {/* Video Controls */}
@@ -78,6 +147,7 @@ export function VideoPlayer({ videoPoints, audioUrl }: VideoPlayerProps) {
             variant="ghost"
             size="icon"
             onClick={togglePlayPause}
+            disabled={isLoading || !!error}
           >
             {isPlaying ? (
               <Pause className="h-6 w-6" />
@@ -92,6 +162,8 @@ export function VideoPlayer({ videoPoints, audioUrl }: VideoPlayerProps) {
               max={totalDuration}
               step={0.1}
               className="w-full"
+              onValueChange={handleSeek}
+              disabled={isLoading || !!error}
             />
           </div>
 
@@ -103,16 +175,25 @@ export function VideoPlayer({ videoPoints, audioUrl }: VideoPlayerProps) {
               step={0.1}
               className="w-24"
               onValueChange={handleVolumeChange}
+              disabled={isLoading || !!error}
             />
           </div>
         </div>
 
         <div className="flex justify-between">
-          <Button variant="outline" className="space-x-2">
+          <Button 
+            variant="outline" 
+            className="space-x-2"
+            disabled={isLoading || !!error}
+          >
             <Share2 className="h-4 w-4" />
             <span>Share</span>
           </Button>
-          <Button className="space-x-2">
+          <Button 
+            className="space-x-2"
+            onClick={handleDownload}
+            disabled={isLoading || !!error}
+          >
             <Download className="h-4 w-4" />
             <span>Download</span>
           </Button>

@@ -12,9 +12,11 @@ import { Volume2 } from 'lucide-react';
 
 import { PageContainer } from '@/components/layout';
 import { ScriptInput, VoiceSelector, GenerationProgress } from '@/components/features/video-generator';
+import { useVideoContext } from '@/lib/context/video-context';
 
 export default function Script2VD() {
   const router = useRouter();
+  const { setVideoData } = useVideoContext();
   const [currentStep, setCurrentStep] = useState(1);
   const [script, setScript] = useState('');
   const [tags, setTags] = useState('');
@@ -44,19 +46,23 @@ export default function Script2VD() {
       }, 500);
       
       // Call the API endpoint with the script and selected voice
+      // Format matches the backend's expected structure
       const response = await fetch('/api/process', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          script: script,
-          tags: tags.split(',').map(tag => tag.trim()),
+          script: script, // Send script exactly as entered
+          tags: tags, // Send as a single string, our API will convert to the tag format
           voiceId: selectedVoice
         }),
       });
       
       const result = await response.json();
+      
+      // Save the video data in context
+      setVideoData(result);
       
       // Complete the progress bar
       clearInterval(interval);
