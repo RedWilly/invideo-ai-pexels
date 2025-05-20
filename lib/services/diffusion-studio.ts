@@ -9,6 +9,25 @@ export class DiffusionStudioService {
   private composition: any; // core.Composition
   private player: HTMLDivElement | null = null;
   private container: HTMLDivElement | null = null;
+  private frameRate: number = 30; // Default frame rate
+  
+  /**
+   * Convert milliseconds to frames based on the frame rate
+   * @param ms - Time in milliseconds
+   * @returns Equivalent number of frames
+   */
+  private msToFrames(ms: number): number {
+    return Math.round((ms / 1000) * this.frameRate);
+  }
+  
+  /**
+   * Convert frames to milliseconds based on the frame rate
+   * @param frames - Number of frames
+   * @returns Equivalent time in milliseconds
+   */
+  private framesToMs(frames: number): number {
+    return Math.round((frames / this.frameRate) * 1000);
+  }
 
   /**
    * Initialize the Diffusion Studio service
@@ -94,6 +113,17 @@ export class DiffusionStudioService {
 
     console.log('Processing video data with sections:', videoData.data.length);
     
+    // Calculate the total duration of the video
+    let totalDuration = 0;
+    for (const section of videoData.data) {
+      if (section.points && section.points.length > 0) {
+        const lastPoint = section.points[section.points.length - 1];
+        totalDuration = Math.max(totalDuration, lastPoint.endTime);
+      }
+    }
+    
+    console.log(`Total video duration: ${totalDuration}ms (${totalDuration / 1000}s)`);
+    
     // Process all sections in sequence to create one continuous video
     for (const section of videoData.data) {
       await this.processSection(section);
@@ -122,9 +152,56 @@ export class DiffusionStudioService {
    * @returns True if the URL points to a supported audio format
    */
   private isSupportedAudioFormat(url: string): boolean {
-    // Diffusion Studio typically supports MP3, WAV, and M4A
-    const supportedFormats = ['.mp3', '.wav', '.m4a'];
-    return supportedFormats.some(format => url.toLowerCase().endsWith(format));
+    console.log('Checking audio format for URL:', url);
+    
+    // Extract the base filename without query parameters
+    try {
+      // First check if the content-type parameter indicates audio
+      if (url.includes('response-content-type=audio') || 
+          url.includes('content-type=audio')) {
+        console.log('URL contains audio content-type parameter, treating as supported audio');
+        return true;
+      }
+      
+      // Parse the URL to get the pathname
+      const urlObj = new URL(url);
+      const pathname = urlObj.pathname;
+      console.log('Extracted pathname:', pathname);
+      
+      // Check for audio extensions in the pathname
+      const supportedFormats = ['.mp3', '.wav', '.m4a', '.ogg', '.aac'];
+      const hasAudioExtension = supportedFormats.some(format => pathname.toLowerCase().endsWith(format));
+      
+      if (hasAudioExtension) {
+        console.log('URL pathname has supported audio extension');
+        return true;
+      }
+      
+      // If we can't determine from the pathname, check the full URL for audio indicators
+      if (url.includes('.mp3') || url.includes('.wav') || url.includes('.m4a') || 
+          url.includes('.ogg') || url.includes('.aac')) {
+        console.log('URL contains audio extension in query parameters or elsewhere');
+        return true;
+      }
+      
+      // // As a last resort, check for common audio-related terms in the URL
+      // if (url.includes('audio') || url.includes('sound') || url.includes('voice') || 
+      //     url.includes('speech') || url.includes('tts')) {
+      //   console.log('URL contains audio-related terms, treating as supported audio');
+      //   return true;
+      // }
+      
+      console.log('No audio format indicators found in URL');
+      return false;
+    } catch (error) {
+      console.error('Error parsing URL:', error);
+      // If we can't parse the URL, check if it contains audio extensions anywhere
+      const containsAudioExtension = url.includes('.mp3') || url.includes('.wav') || 
+                                    url.includes('.m4a') || url.includes('.ogg') || 
+                                    url.includes('.aac');
+      console.log('Fallback check for audio extensions:', containsAudioExtension);
+      return containsAudioExtension;
+    }
   }
 
   /**
@@ -132,42 +209,63 @@ export class DiffusionStudioService {
    * @param section - The video section to process
    */
   private async processSection(section: VideoSection): Promise<void> {
-    // Add audio track for the section
+    console.log(`Processing section: ${section.sectionId}`);
+    
+    // Find the section's start and end times from the first and last points
+    let sectionStartTime = 0;
+    let sectionEndTime = 0;
+    
+    if (section.points && section.points.length > 0) {
+      sectionStartTime = section.points[0].startTime;
+      sectionEndTime = section.points[section.points.length - 1].endTime;
+      console.log(`Section time range: ${sectionStartTime}ms to ${sectionEndTime}ms (${(sectionEndTime - sectionStartTime) / 1000}s)`);
+    }
+    
+    // Add audio track for the section at the correct position in the timeline
     if (section.audioUrl) {
       try {
         // Check if the audio format is supported
         if (!this.isSupportedAudioFormat(section.audioUrl)) {
           console.warn(`Unsupported audio format: ${section.audioUrl}`);
           console.log('Continuing without audio due to unsupported format');
-          return;
+        } else {
+          // Use a proxied URL for the audio to avoid CORS issues
+          const proxiedAudioUrl = this.createProxyUrl(section.audioUrl, 'audio');
+          console.log(`Using proxied audio URL: ${proxiedAudioUrl}`);
+          
+          // Create an audio source
+          console.log('Creating audio source from URL');
+          const audioSource = await core.Source.from<core.AudioSource>(proxiedAudioUrl);
+          console.log('Audio source created successfully');
+          
+          // Create an audio clip from the source
+          const audioClip = new core.AudioClip(audioSource);
+          console.log('Audio clip created');
+          
+          // Position the audio clip at the correct start time in the timeline
+          // Convert milliseconds to frames (assuming 30fps)
+          const startFrames = this.msToFrames(sectionStartTime);
+          console.log(`Positioning audio at ${sectionStartTime}ms (frame ${startFrames})`);
+          
+          // Set the position of the audio clip in the timeline
+          audioClip.offset(startFrames);
+          
+          // Add to composition
+          await this.composition.add(audioClip);
+          console.log('Audio clip added to composition successfully');
         }
-        
-        // Use a proxied URL for the audio to avoid CORS issues
-        const proxiedAudioUrl = this.createProxyUrl(section.audioUrl, 'audio');
-        console.log(`Using proxied audio URL: ${proxiedAudioUrl}`);
-        
-        // According to documentation, we need to create an audio source first
-        console.log('Creating audio source from URL');
-        const audioSource = await core.Source.from<core.AudioSource>(proxiedAudioUrl);
-        console.log('Audio source created successfully');
-        
-        // Then create an audio clip from the source
-        const audioClip = new core.AudioClip(audioSource);
-        console.log('Audio clip created, adding to composition');
-        
-        // Add to composition
-        await this.composition.add(audioClip);
-        console.log('Audio clip added to composition successfully');
       } catch (error) {
         console.error(`Error adding audio clip: ${error}`);
-        // Continue without audio if there's an error
         console.log('Continuing without audio due to error');
       }
     }
 
-    // Process each video point in the section
-    for (const point of section.points) {
-      await this.addVideoPoint(point);
+    // Process all video points in the section
+    if (section.points && section.points.length > 0) {
+      console.log(`Processing ${section.points.length} video points`);
+      for (const point of section.points) {
+        await this.addVideoPoint(point);
+      }
     }
   }
 
@@ -176,40 +274,53 @@ export class DiffusionStudioService {
    * @param point - The video point to add
    */
   private async addVideoPoint(point: VideoPoint): Promise<void> {
-    // Calculate duration in frames
-    const durationInFrames = point.endTime - point.startTime;
-    
-    // Use the actual video URL from the point data, but proxy it to avoid CORS issues
-    const originalUrl = point.videoUrl;
-    const videoUrl = this.createProxyUrl(originalUrl, 'video');
-    
-    console.log(`Adding video clip: ${point.text} (${point.startTime}-${point.endTime})`);
-    console.log(`Using proxied video URL: ${videoUrl}`);
-    
     try {
-      // Check if the URL is a video format that Diffusion Studio supports
-      if (!this.isSupportedVideoFormat(originalUrl)) {
-        console.warn(`Unsupported video format: ${originalUrl}`);
-        // Fall back to placeholder immediately for unsupported formats
+      console.log(`Adding video point: ${point.videoId} (${point.startTime}ms to ${point.endTime}ms)`);
+      
+      // Calculate duration in milliseconds and frames
+      const durationMs = point.endTime - point.startTime;
+      const durationFrames = this.msToFrames(durationMs);
+      const startFrame = this.msToFrames(point.startTime);
+      
+      console.log(`Video duration: ${durationMs}ms (${durationFrames} frames), starting at frame ${startFrame}`);
+      
+      // Check if the video format is supported
+      if (!this.isSupportedVideoFormat(point.videoUrl)) {
+        console.warn(`Unsupported video format: ${point.videoUrl}`);
+        console.log('Using placeholder for unsupported video format');
         this.addPlaceholder(point);
         return;
       }
+
+      // Use a proxied URL for the video to avoid CORS issues
+      const originalUrl = point.videoUrl;
+      const videoUrl = this.createProxyUrl(originalUrl, 'video');
+      console.log(`Using proxied video URL: ${videoUrl}`);
       
-      // Create video clip
-      const videoClip = new core.VideoClip(videoUrl, {
-        position: 'center',
-        width: '100%',
-        height: '100%',
+      // Create a video source from the URL
+      console.log(`Creating video source from URL: ${videoUrl}`);
+      const videoSource = await core.Source.from<core.VideoSource>(videoUrl);
+      console.log('Video source created successfully');
+      
+      // Create a video clip from the source
+      const videoClip = new core.VideoClip(videoSource, {
+        position: 'center', // Center the video in the composition
+        width: '100%',      // Use the full width of the composition
+        height: '100%',     // Use the full height of the composition
+        muted: true,        // Mute the video since we'll use the audio track from the section
       });
       
-      // Set timing using offset and subclip methods
-      // The offset places the clip at the correct position in the timeline
-      // The subclip trims the clip to the desired duration
-      videoClip.offset(point.startTime);
-      videoClip.subclip(0, durationInFrames);
+      // Position the clip at the exact frame in the timeline
+      console.log(`Positioning video at frame ${startFrame} (${point.startTime}ms)`);
+      videoClip.offset(startFrame);
+      
+      // Trim the clip to the exact duration needed
+      console.log(`Trimming video to ${durationFrames} frames (${durationMs}ms)`);
+      videoClip.subclip(0, durationFrames);
       
       // Add to composition
       await this.composition.add(videoClip);
+      console.log(`Video point ${point.videoId} added successfully`);
     } catch (error) {
       console.error(`Error adding video clip for point ${point.videoId}:`, error);
       // Fallback to a placeholder if video can't be loaded
@@ -233,22 +344,35 @@ export class DiffusionStudioService {
   }
 
   private addPlaceholder(point: VideoPoint): void {
+    console.log(`Adding placeholder for video point: ${point.videoId}`);
+    
+    // Calculate frames from milliseconds
+    const startFrame = this.msToFrames(point.startTime);
+    const endFrame = this.msToFrames(point.endTime);
+    
     // Create a placeholder with the thumbnail image, but proxy it to avoid CORS issues
     const proxiedThumbnailUrl = this.createProxyUrl(point.videoThumbnail, 'image');
     console.log(`Using proxied thumbnail URL: ${proxiedThumbnailUrl}`);
+    
     const imageClip = new core.ImageClip(proxiedThumbnailUrl, {
       position: 'center',
       width: '100%',
       height: '100%',
     });
     
-    // Set timing using trim method
-    const startFrame = point.startTime;
-    const endFrame = point.endTime;
-    imageClip.trim(startFrame, endFrame);
+    // Position the image at the correct frame in the timeline
+    console.log(`Positioning placeholder at frame ${startFrame} (${point.startTime}ms)`);
+    imageClip.offset(startFrame);
+    
+    // Set the duration of the placeholder
+    const durationFrames = endFrame - startFrame;
+    console.log(`Setting placeholder duration to ${durationFrames} frames (${point.endTime - point.startTime}ms)`);
+    // Use trim instead of subclip for ImageClip as it doesn't have subclip method
+    imageClip.trim(0, durationFrames);
     
     // Add to composition
     this.composition.add(imageClip);
+    console.log('Placeholder added successfully');
   }
 
   /**
