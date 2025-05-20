@@ -34,27 +34,78 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
   useEffect(() => {
     if (!videoData || !videoData.success || !videoData.data.length) return;
     
+    // Create a flag to track if the effect is still mounted
+    let isMounted = true;
+    let initAttempts = 0;
+    const maxAttempts = 5;
+    
+    const waitForPlayerRef = () => {
+      return new Promise<HTMLDivElement>((resolve, reject) => {
+        // Check if player ref is already available
+        if (playerRef.current) {
+          console.log('Player container is immediately available');
+          return resolve(playerRef.current);
+        }
+        
+        // Otherwise, poll for it
+        let attempts = 0;
+        const maxPollingAttempts = 10;
+        const interval = setInterval(() => {
+          attempts++;
+          
+          if (playerRef.current) {
+            clearInterval(interval);
+            console.log(`Player container found after ${attempts} attempts`);
+            resolve(playerRef.current);
+          } else if (attempts >= maxPollingAttempts) {
+            clearInterval(interval);
+            reject(new Error(`Player container not found after ${maxPollingAttempts} attempts`));
+          }
+        }, 100);
+      });
+    };
+    
     const initDiffusionStudio = async () => {
       try {
+        initAttempts++;
         setIsLoading(true);
+        console.log(`Initializing Diffusion Studio (attempt ${initAttempts}/${maxAttempts})`);
         
         // Initialize Diffusion Studio service
         const diffusionStudio = new DiffusionStudioService();
         diffusionStudioRef.current = diffusionStudio;
         
-        // Attach player if ref is available
-        if (playerRef.current) {
-          diffusionStudio.attachPlayer(playerRef.current);
-        }
-        
-        // Process all video data
+        // Process all video data first
+        console.log('Processing video data...');
         await diffusionStudio.processVideoData(videoData);
+        console.log('Video data processed successfully');
         
-        setIsLoading(false);
+        // Wait for the player container to be available
+        console.log('Waiting for player container...');
+        const playerContainer = await waitForPlayerRef();
+        console.log('Player container found, attaching player...');
+        
+        // Let the service create and attach the player
+        diffusionStudio.attachPlayer(playerContainer);
+        console.log('Player attached successfully');
+        
+        if (isMounted) {
+          setIsLoading(false);
+        }
       } catch (err) {
         console.error('Error initializing Diffusion Studio:', err);
-        setError('Failed to initialize video player');
-        setIsLoading(false);
+        
+        // Retry initialization if we haven't exceeded max attempts
+        if (initAttempts < maxAttempts && isMounted) {
+          console.log(`Retrying initialization (${initAttempts}/${maxAttempts})...`);
+          setTimeout(initDiffusionStudio, 500);
+          return;
+        }
+        
+        if (isMounted) {
+          setError(`Failed to initialize video player: ${err instanceof Error ? err.message : String(err)}`);
+          setIsLoading(false);
+        }
       }
     };
     
@@ -62,7 +113,14 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
     
     // Cleanup function
     return () => {
-      // Any cleanup needed for Diffusion Studio
+      isMounted = false;
+      if (diffusionStudioRef.current) {
+        console.log('Cleaning up Diffusion Studio');
+        // Pause playback if it's playing
+        if (isPlaying) {
+          diffusionStudioRef.current.pause();
+        }
+      }
     };
   }, [videoData]);
 
@@ -124,19 +182,25 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
   return (
     <Card className="overflow-hidden">
       <div className="relative aspect-video bg-black">
-        {isLoading ? (
-          <div className="w-full h-full flex items-center justify-center">
+        {/* Always render the player container, but hide it when loading or error */}
+        <div 
+          ref={playerRef} 
+          className="w-full h-full"
+          style={{ display: (!isLoading && !error) ? 'block' : 'none' }}
+        ></div>
+        
+        {/* Show loading spinner when loading */}
+        {isLoading && (
+          <div className="w-full h-full absolute top-0 left-0 flex items-center justify-center">
             <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin"></div>
           </div>
-        ) : error ? (
-          <div className="w-full h-full flex items-center justify-center text-red-500">
+        )}
+        
+        {/* Show error message when there's an error */}
+        {error && (
+          <div className="w-full h-full absolute top-0 left-0 flex items-center justify-center text-red-500">
             <p>{error}</p>
           </div>
-        ) : (
-          <div 
-            ref={playerRef} 
-            className="w-full h-full"
-          ></div>
         )}
       </div>
 

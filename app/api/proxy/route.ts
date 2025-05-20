@@ -12,9 +12,10 @@ export const bodyParser = false;
  * This endpoint will fetch the requested resource and return it with the appropriate headers
  */
 export async function GET(request: Request) {
-  // Get the URL from the query parameters
+  // Get the URL and type from the query parameters
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
+  const type = searchParams.get('type') || ''; // Get the media type hint if provided
 
   if (!url) {
     return NextResponse.json(
@@ -41,22 +42,51 @@ export async function GET(request: Request) {
     
     // Get the content type from the response
     let contentType = response.headers.get('content-type') || '';
+    const originalContentType = contentType;
     
-    // Determine content type based on URL if not provided
-    if (!contentType || contentType === 'application/octet-stream') {
-      if (url.endsWith('.mp3') || url.endsWith('.m4a')) {
+    // Log the original content type from the server
+    console.log(`Original content type from server: ${originalContentType}`);
+    
+    // Determine content type based on URL extension and type hint
+    if (!contentType || contentType === 'application/octet-stream' || type) {
+      const lowerUrl = url.toLowerCase();
+      
+      // Audio types
+      if (type === 'audio' || lowerUrl.endsWith('.mp3')) {
         contentType = 'audio/mpeg';
-      } else if (url.endsWith('.mp4')) {
+      } else if (lowerUrl.endsWith('.wav')) {
+        contentType = 'audio/wav';
+      } else if (lowerUrl.endsWith('.m4a')) {
+        contentType = 'audio/mp4';
+      } else if (lowerUrl.endsWith('.ogg')) {
+        contentType = 'audio/ogg';
+      }
+      // Video types
+      else if (type === 'video' || lowerUrl.endsWith('.mp4')) {
         contentType = 'video/mp4';
-      } else if (url.endsWith('.webm')) {
+      } else if (lowerUrl.endsWith('.webm')) {
         contentType = 'video/webm';
-      } else if (url.endsWith('.jpg') || url.endsWith('.jpeg')) {
+      } else if (lowerUrl.endsWith('.mov')) {
+        contentType = 'video/quicktime';
+      }
+      // Image types
+      else if (type === 'image' || lowerUrl.endsWith('.jpg') || lowerUrl.endsWith('.jpeg')) {
         contentType = 'image/jpeg';
-      } else if (url.endsWith('.png')) {
+      } else if (lowerUrl.endsWith('.png')) {
         contentType = 'image/png';
+      } else if (lowerUrl.endsWith('.gif')) {
+        contentType = 'image/gif';
+      } else if (lowerUrl.endsWith('.webp')) {
+        contentType = 'image/webp';
       } else {
+        // Default to octet-stream if we can't determine the type
         contentType = 'application/octet-stream';
       }
+    }
+    
+    // Log if we changed the content type
+    if (contentType !== originalContentType) {
+      console.log(`Changed content type from ${originalContentType} to ${contentType}`);
     }
     
     console.log(`Proxying ${url} with content type: ${contentType}`);
@@ -65,17 +95,40 @@ export async function GET(request: Request) {
     const buffer = await response.arrayBuffer();
     
     // Create a new response with the buffer and appropriate headers
+    const headers = new Headers();
+    
+    // Set content type
+    headers.set('Content-Type', contentType);
+    
+    // Set content length if available
+    const contentLength = response.headers.get('content-length');
+    if (contentLength) {
+      headers.set('Content-Length', contentLength);
+    }
+    
+    // CORS headers
+    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS, HEAD');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Range, Origin, Accept');
+    headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+    
+    // Range request support
+    headers.set('Accept-Ranges', 'bytes');
+    
+    // Caching
+    headers.set('Cache-Control', 'public, max-age=86400');
+    
+    // Create the response
     const proxiedResponse = new NextResponse(buffer, {
       status: 200,
-      headers: {
-        'Content-Type': contentType,
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Range',
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'public, max-age=86400',
-      },
+      headers: headers,
     });
+    
+    console.log(`Successfully proxied ${url} with content type: ${contentType}`);
+    
+    // Add custom header for debugging
+    proxiedResponse.headers.set('X-Proxy-Info', `Content-Type: ${contentType}`);
+    proxiedResponse.headers.set('X-Original-Type', originalContentType || 'none');
     
     return proxiedResponse;
   } catch (error) {
