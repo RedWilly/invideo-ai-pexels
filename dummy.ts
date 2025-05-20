@@ -6,7 +6,7 @@
  * node dummy.ts
  * 
  * real backend is still been worked on serveral few bugs need to be fixed 
- *ill be open source it when its ready ( and it will use pexels for video )
+ * ill be open source it when its ready ( and it will use pexels for video )
  */
 
 // Node.js built-in modules
