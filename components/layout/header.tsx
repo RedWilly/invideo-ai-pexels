@@ -14,7 +14,7 @@ export function Header() {
           <Link href="/script2vd">
             <Button variant="ghost">Create Video</Button>
           </Link>
-          <Link href="/complete">
+          <Link href="/my-videos">
             <Button variant="ghost">My Videos</Button>
           </Link>
         </nav>

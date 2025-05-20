@@ -1,6 +1,7 @@
 "use client";
 import * as core from '@diffusionstudio/core';
 import { VideoPoint, VideoSection, VideoData } from '@/lib/types/video';
+import { storageService } from '@/lib/services/storage-service';
 
 /**
  * DiffusionStudioService - Handles video composition and rendering using Diffusion Studio
@@ -104,9 +105,10 @@ export class DiffusionStudioService {
   /**
    * Process video data and create a composition
    * @param videoData - The video data from the API
+   * @param title - Optional title for the video (for storing in history)
    * @returns Promise that resolves when the composition is ready
    */
-  public async processVideoData(videoData: VideoData): Promise<void> {
+  public async processVideoData(videoData: VideoData, title?: string): Promise<void> {
     if (!videoData.success || !videoData.data || videoData.data.length === 0) {
       throw new Error('Invalid video data');
     }
@@ -123,6 +125,17 @@ export class DiffusionStudioService {
     }
     
     console.log(`Total video duration: ${totalDuration}ms (${totalDuration / 1000}s)`);
+    
+    // Store the video data in IndexedDB for history if title is provided
+    if (title) {
+      try {
+        const videoId = await storageService.storeVideoData(videoData, title);
+        console.log(`Video data stored in history with ID: ${videoId}`);
+      } catch (error) {
+        console.error('Error storing video data in history:', error);
+        // Continue processing even if storage fails
+      }
+    }
     
     // Process all sections in sequence to create one continuous video
     for (const section of videoData.data) {
@@ -144,6 +157,44 @@ export class DiffusionStudioService {
       return `/api/proxy?url=${encodeURIComponent(url)}&type=${type}`;
     }
     return url;
+  }
+  
+  /**
+   * Fetch media with caching using IndexedDB
+   * @param url - URL of the media to fetch
+   * @param type - Type of media (audio, video, image)
+   * @returns ArrayBuffer containing the media data
+   */
+  private async fetchMediaWithCache(url: string, type: 'audio' | 'video' | 'image'): Promise<ArrayBuffer> {
+    try {
+      // First check if the media is already in IndexedDB
+      const cachedData = await storageService.getMedia(url);
+      
+      if (cachedData) {
+        console.log(`Using cached ${type} from IndexedDB: ${url}`);
+        return cachedData;
+      }
+      
+      // If not in cache, fetch it from the network
+      console.log(`Fetching ${type} from network: ${url}`);
+      const proxiedUrl = this.createProxyUrl(url, type);
+      
+      const response = await fetch(proxiedUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch ${type}: ${response.status} ${response.statusText}`);
+      }
+      
+      const buffer = await response.arrayBuffer();
+      
+      // Store the fetched media in IndexedDB for future use
+      await storageService.storeMedia(url, buffer, type);
+      console.log(`Stored ${type} in IndexedDB: ${url}`);
+      
+      return buffer;
+    } catch (error) {
+      console.error(`Error fetching ${type} with cache:`, error);
+      throw error;
+    }
   }
   
   /**
@@ -233,26 +284,40 @@ export class DiffusionStudioService {
           const proxiedAudioUrl = this.createProxyUrl(section.audioUrl, 'audio');
           console.log(`Using proxied audio URL: ${proxiedAudioUrl}`);
           
-          // Create an audio source
+          // Create an audio source with caching
           console.log('Creating audio source from URL');
-          const audioSource = await core.Source.from<core.AudioSource>(proxiedAudioUrl);
-          console.log('Audio source created successfully');
           
-          // Create an audio clip from the source
-          const audioClip = new core.AudioClip(audioSource);
-          console.log('Audio clip created');
-          
-          // Position the audio clip at the correct start time in the timeline
-          // Convert milliseconds to frames (assuming 30fps)
-          const startFrames = this.msToFrames(sectionStartTime);
-          console.log(`Positioning audio at ${sectionStartTime}ms (frame ${startFrames})`);
-          
-          // Set the position of the audio clip in the timeline
-          audioClip.offset(startFrames);
-          
-          // Add to composition
-          await this.composition.add(audioClip);
-          console.log('Audio clip added to composition successfully');
+          try {
+            // Fetch the audio with caching
+            const audioBuffer = await this.fetchMediaWithCache(section.audioUrl, 'audio');
+            
+            // Create a blob from the buffer with the correct MIME type
+            const mimeType = section.audioUrl.toLowerCase().includes('.wav') ? 'audio/wav' : 'audio/mpeg';
+            const audioBlob = new Blob([audioBuffer], { type: mimeType });
+            
+            // Create a source from the blob
+            const audioSource = await core.Source.from<core.AudioSource>(audioBlob);
+            console.log('Audio source created successfully');
+            
+            // Create an audio clip from the source
+            const audioClip = new core.AudioClip(audioSource);
+            console.log('Audio clip created');
+            
+            // Position the audio clip at the correct start time in the timeline
+            // Convert milliseconds to frames (assuming 30fps)
+            const startFrames = this.msToFrames(sectionStartTime);
+            console.log(`Positioning audio at ${sectionStartTime}ms (frame ${startFrames})`);
+            
+            // Set the position of the audio clip in the timeline
+            audioClip.offset(startFrames);
+            
+            // Add to composition
+            await this.composition.add(audioClip);
+            console.log('Audio clip added to composition successfully');
+          } catch (error) {
+            console.error(`Error adding audio clip: ${error}`);
+            console.log('Continuing without audio due to error');
+          }
         }
       } catch (error) {
         console.error(`Error adding audio clip: ${error}`);
@@ -297,30 +362,45 @@ export class DiffusionStudioService {
       const videoUrl = this.createProxyUrl(originalUrl, 'video');
       console.log(`Using proxied video URL: ${videoUrl}`);
       
-      // Create a video source from the URL
-      console.log(`Creating video source from URL: ${videoUrl}`);
-      const videoSource = await core.Source.from<core.VideoSource>(videoUrl);
-      console.log('Video source created successfully');
+      // Create a video source from the URL with caching
+      console.log(`Creating video source from URL: ${originalUrl}`);
       
-      // Create a video clip from the source
-      const videoClip = new core.VideoClip(videoSource, {
-        position: 'center', // Center the video in the composition
-        width: '100%',      // Use the full width of the composition
-        height: '100%',     // Use the full height of the composition
-        muted: true,        // Mute the video since we'll use the audio track from the section
-      });
+      try {
+        // Fetch the video with caching
+        const videoBuffer = await this.fetchMediaWithCache(originalUrl, 'video');
+        
+        // Create a blob from the buffer with the correct MIME type
+        const mimeType = originalUrl.toLowerCase().endsWith('.webm') ? 'video/webm' : 'video/mp4';
+        const videoBlob = new Blob([videoBuffer], { type: mimeType });
+        
+        // Create a source from the blob
+        const videoSource = await core.Source.from<core.VideoSource>(videoBlob);
+        console.log('Video source created successfully');
       
-      // Position the clip at the exact frame in the timeline
-      console.log(`Positioning video at frame ${startFrame} (${point.startTime}ms)`);
-      videoClip.offset(startFrame);
+        // Create a video clip from the source
+        const videoClip = new core.VideoClip(videoSource, {
+          position: 'center', // Center the video in the composition
+          width: '100%',      // Use the full width of the composition
+          height: '100%',     // Use the full height of the composition
+          muted: true,        // Mute the video since we'll use the audio track from the section
+        });
       
-      // Trim the clip to the exact duration needed
-      console.log(`Trimming video to ${durationFrames} frames (${durationMs}ms)`);
-      videoClip.subclip(0, durationFrames);
-      
-      // Add to composition
-      await this.composition.add(videoClip);
-      console.log(`Video point ${point.videoId} added successfully`);
+        // Position the clip at the exact frame in the timeline
+        console.log(`Positioning video at frame ${startFrame} (${point.startTime}ms)`);
+        videoClip.offset(startFrame);
+        
+        // Trim the clip to the exact duration needed
+        console.log(`Trimming video to ${durationFrames} frames (${durationMs}ms)`);
+        videoClip.subclip(0, durationFrames);
+        
+        // Add to composition
+        await this.composition.add(videoClip);
+        console.log(`Video point ${point.videoId} added successfully`);
+      } catch (error) {
+        console.error(`Error processing video ${point.videoId}:`, error);
+        // Fallback to a placeholder if video processing fails
+        await this.addPlaceholder(point);
+      }
     } catch (error) {
       console.error(`Error adding video clip for point ${point.videoId}:`, error);
       // Fallback to a placeholder if video can't be loaded
@@ -343,36 +423,49 @@ export class DiffusionStudioService {
     return supportedFormats.some(format => url.toLowerCase().endsWith(format));
   }
 
-  private addPlaceholder(point: VideoPoint): void {
+  private async addPlaceholder(point: VideoPoint): Promise<void> {
     console.log(`Adding placeholder for video point: ${point.videoId}`);
     
     // Calculate frames from milliseconds
     const startFrame = this.msToFrames(point.startTime);
     const endFrame = this.msToFrames(point.endTime);
     
-    // Create a placeholder with the thumbnail image, but proxy it to avoid CORS issues
-    const proxiedThumbnailUrl = this.createProxyUrl(point.videoThumbnail, 'image');
-    console.log(`Using proxied thumbnail URL: ${proxiedThumbnailUrl}`);
+    // Create a placeholder with the thumbnail image using caching
+    console.log(`Creating image placeholder from URL: ${point.videoThumbnail}`);
     
-    const imageClip = new core.ImageClip(proxiedThumbnailUrl, {
-      position: 'center',
-      width: '100%',
-      height: '100%',
-    });
+    try {
+      // Fetch the image with caching
+      const imageBuffer = await this.fetchMediaWithCache(point.videoThumbnail, 'image');
+      
+      // Create a blob from the buffer with the correct MIME type
+      const mimeType = point.videoThumbnail.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const imageBlob = new Blob([imageBuffer], { type: mimeType });
+      
+      // Create a URL for the blob
+      const imageUrl = URL.createObjectURL(imageBlob);
+      
+      const imageClip = new core.ImageClip(imageUrl, {
+        position: 'center',
+        width: '100%',
+        height: '100%',
+      });
     
-    // Position the image at the correct frame in the timeline
-    console.log(`Positioning placeholder at frame ${startFrame} (${point.startTime}ms)`);
-    imageClip.offset(startFrame);
-    
-    // Set the duration of the placeholder
-    const durationFrames = endFrame - startFrame;
-    console.log(`Setting placeholder duration to ${durationFrames} frames (${point.endTime - point.startTime}ms)`);
-    // Use trim instead of subclip for ImageClip as it doesn't have subclip method
-    imageClip.trim(0, durationFrames);
-    
-    // Add to composition
-    this.composition.add(imageClip);
-    console.log('Placeholder added successfully');
+      // Position the image at the correct frame in the timeline
+      console.log(`Positioning placeholder at frame ${startFrame} (${point.startTime}ms)`);
+      imageClip.offset(startFrame);
+      
+      // Set the duration of the placeholder
+      const durationFrames = endFrame - startFrame;
+      console.log(`Setting placeholder duration to ${durationFrames} frames (${point.endTime - point.startTime}ms)`);
+      // Use trim instead of subclip for ImageClip as it doesn't have subclip method
+      imageClip.trim(0, durationFrames);
+      
+      // Add to composition
+      this.composition.add(imageClip);
+      console.log('Placeholder added successfully');
+    } catch (error) {
+      console.error(`Error creating placeholder for video ${point.videoId}:`, error);
+    }
   }
 
   /**

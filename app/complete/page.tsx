@@ -2,12 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
+import { VideoIcon } from 'lucide-react';
 
 // Import our modular components
 import { PageContainer } from '@/components/layout';
 import { VideoPlayer, VideoSections } from '@/components/features/video-player';
 import { VideoData } from '@/lib/types/video';
-import { useVideoContext } from '@/lib/context/video-context';
+import { useVideoContext } from '@/lib/contexts/video-context';
 
 // Using shared types from lib/types/video.ts
 
@@ -69,11 +72,20 @@ export default function Complete() {
         <>
           <VideoPlayer videoData={videoData!} />
 
-          <div className="mt-8">
+          <div className="mt-8 mb-4">
             <VideoSections 
               videoPoints={videoData!.data.flatMap(section => section.points)} 
               onSectionSelect={handleSectionSelect} 
             />
+          </div>
+          
+          <div className="flex justify-center mt-8 mb-12">
+            <Link href="/my-videos">
+              <Button variant="outline" className="flex items-center space-x-2">
+                <VideoIcon className="h-4 w-4" />
+                <span>View All My Videos</span>
+              </Button>
+            </Link>
           </div>
         </>
       )}

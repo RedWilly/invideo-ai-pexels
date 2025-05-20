@@ -1,12 +1,14 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Slider } from '@/components/ui/slider';
 import { Card } from '@/components/ui/card';
-import { Play, Pause, Volume2, Download, Share2 } from 'lucide-react';
+import { Slider } from '@/components/ui/slider';
+import { Play, Pause, Volume2, Download, Share2, Save } from 'lucide-react';
 import { DiffusionStudioService } from '@/lib/services/diffusion-studio';
-import { VideoData, VideoSection, VideoPoint } from '@/lib/types/video';
+import { VideoData } from '@/lib/types/video';
+import { useVideoContext } from '@/lib/contexts/video-context';
+import { storageService } from '@/lib/services/storage-service';
 
 interface VideoPlayerProps {
   videoData: VideoData;
@@ -18,6 +20,9 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
   const [volume, setVolume] = useState(1);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [videoTitle, setVideoTitle] = useState('My Video');
   
   const playerRef = useRef<HTMLDivElement>(null);
   const diffusionStudioRef = useRef<DiffusionStudioService | null>(null);
@@ -178,6 +183,27 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
       }
     }
   };
+  
+  const saveToMyVideos = async () => {
+    if (!videoData) return;
+    
+    try {
+      setIsSaving(true);
+      // Store the video data in IndexedDB
+      await storageService.storeVideoData(videoData, videoTitle);
+      setIsSaved(true);
+      setIsSaving(false);
+      
+      // Show success message (could be replaced with a toast notification)
+      setTimeout(() => {
+        setIsSaved(false);
+      }, 3000);
+    } catch (err) {
+      console.error('Error saving video to My Videos:', err);
+      setIsSaving(false);
+      alert('Failed to save video to My Videos');
+    }
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -244,6 +270,42 @@ export function VideoPlayer({ videoData }: VideoPlayerProps) {
           </div>
         </div>
 
+        {/* Title input and save button */}
+        <div className="flex items-center space-x-2 mb-4">
+          <input
+            type="text"
+            value={videoTitle}
+            onChange={(e) => setVideoTitle(e.target.value)}
+            placeholder="Enter video title"
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isLoading || !!error || isSaving}
+          />
+          <Button
+            variant={isSaved ? "outline" : "secondary"}
+            className="space-x-2 whitespace-nowrap"
+            onClick={saveToMyVideos}
+            disabled={isLoading || !!error || isSaving || isSaved}
+          >
+            {isSaving ? (
+              <>
+                <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                <span>Saving...</span>
+              </>
+            ) : isSaved ? (
+              <>
+                <Save className="h-4 w-4 text-green-500" />
+                <span className="text-green-500">Saved!</span>
+              </>
+            ) : (
+              <>
+                <Save className="h-4 w-4" />
+                <span>Save to My Videos</span>
+              </>
+            )}
+          </Button>
+        </div>
+        
+        {/* Download and share buttons */}
         <div className="flex justify-between">
           <Button 
             variant="outline" 

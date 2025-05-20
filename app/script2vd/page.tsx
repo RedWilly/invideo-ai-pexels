@@ -12,7 +12,7 @@ import { Volume2 } from 'lucide-react';
 
 import { PageContainer } from '@/components/layout';
 import { ScriptInput, VoiceSelector, GenerationProgress } from '@/components/features/video-generator';
-import { useVideoContext } from '@/lib/context/video-context';
+import { useVideoContext } from '@/lib/contexts/video-context';
 
 export default function Script2VD() {
   const router = useRouter();

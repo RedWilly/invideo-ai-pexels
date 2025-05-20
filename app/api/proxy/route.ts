@@ -116,7 +116,7 @@ export async function GET(request: Request) {
     headers.set('Accept-Ranges', 'bytes');
     
     // Caching
-    headers.set('Cache-Control', 'public, max-age=86400');
+    // headers.set('Cache-Control', 'public, max-age=86400');
     
     // Create the response
     const proxiedResponse = new NextResponse(buffer, {
