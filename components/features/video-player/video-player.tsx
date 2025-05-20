@@ -7,7 +7,6 @@ import { Slider } from '@/components/ui/slider';
 import { Play, Pause, Volume2, Download, Share2, Save } from 'lucide-react';
 import { DiffusionStudioService } from '@/lib/services/diffusion-studio';
 import { VideoData } from '@/lib/types/video';
-import { useVideoContext } from '@/lib/contexts/video-context';
 import { storageService } from '@/lib/services/storage-service';
 
 interface VideoPlayerProps {

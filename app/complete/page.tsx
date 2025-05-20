@@ -6,13 +6,9 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { VideoIcon } from 'lucide-react';
 
-// Import our modular components
 import { PageContainer } from '@/components/layout';
 import { VideoPlayer, VideoSections } from '@/components/features/video-player';
-import { VideoData } from '@/lib/types/video';
 import { useVideoContext } from '@/lib/contexts/video-context';
-
-// Using shared types from lib/types/video.ts
 
 export default function Complete() {
   const router = useRouter();
@@ -29,7 +25,7 @@ export default function Complete() {
       return;
     }
     
-    // If we have video data, we're ready to display it
+    // If we already have video data, we're ready to display it
     if (videoData.success && videoData.data && videoData.data.length > 0) {
       console.log('Video data loaded from context:', videoData);
       setIsLoading(false);
@@ -42,7 +38,7 @@ export default function Complete() {
   // Handle section selection
   const handleSectionSelect = (index: number) => {
     console.log(`Selected section ${index}`);
-    // In a real implementation, this would seek the video to the selected section
+    // this would seek the video to the selected section
   };
 
   return (

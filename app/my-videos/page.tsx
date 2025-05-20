@@ -12,7 +12,7 @@ import { formatDistanceToNow } from 'date-fns';
 
 export default function MyVideosPage() {
   const [videos, setVideos] = useState<Array<{
-    id: number;
+    uniqueId: string;
     videoData: VideoData;
     title: string;
     timestamp: number;
@@ -44,11 +44,11 @@ export default function MyVideosPage() {
     router.push('/complete');
   };
 
-  const handleDeleteVideo = async (id: number) => {
+  const handleDeleteVideo = async (uniqueId: string) => {
     try {
-      await storageService.deleteVideo(id);
+      await storageService.deleteVideo(uniqueId);
       // Update the videos list
-      setVideos(videos.filter(video => video.id !== id));
+      setVideos(videos.filter(video => video.uniqueId !== uniqueId));
     } catch (error) {
       console.error('Error deleting video:', error);
     }
@@ -77,7 +77,7 @@ export default function MyVideosPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {videos.map((video) => (
-            <Card key={video.id} className="overflow-hidden">
+            <Card key={video.uniqueId} className="overflow-hidden">
               <div className="aspect-video bg-black relative">
                 {video.thumbnail ? (
                   <img
@@ -94,7 +94,7 @@ export default function MyVideosPage() {
                   variant="ghost"
                   size="icon"
                   className="absolute top-2 right-2 bg-background/80 hover:bg-background"
-                  onClick={() => handleDeleteVideo(video.id)}
+                  onClick={() => handleDeleteVideo(video.uniqueId)}
                 >
                   <Trash2 className="h-5 w-5 text-destructive" />
                 </Button>

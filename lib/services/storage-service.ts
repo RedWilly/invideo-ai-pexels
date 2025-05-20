@@ -6,7 +6,7 @@ import { VideoData } from "@/lib/types/video";
  * StorageService - Handles IndexedDB operations for caching media and storing video history
  */
 export class StorageService {
-  private dbName = 'script2video-db';
+  private dbName = 'script2video-db-v2';
   private mediaStoreName = 'media-store';
   private videoStoreName = 'video-store';
   private db: IDBDatabase | null = null;
@@ -54,7 +54,8 @@ export class StorageService {
         
         // Create video store for storing video history
         if (!db.objectStoreNames.contains(this.videoStoreName)) {
-          const videoStore = db.createObjectStore(this.videoStoreName, { keyPath: 'id', autoIncrement: true });
+          // Use a unique ID that includes timestamp to avoid reusing IDs
+          const videoStore = db.createObjectStore(this.videoStoreName, { keyPath: 'uniqueId' });
           videoStore.createIndex('timestamp', 'timestamp', { unique: false });
           videoStore.createIndex('title', 'title', { unique: false });
           console.log('Video store created');
@@ -146,31 +147,47 @@ export class StorageService {
    * @param title - Title of the video
    * @returns Promise that resolves with the ID of the stored video
    */
-  public async storeVideoData(videoData: VideoData, title: string): Promise<number> {
+  public async storeVideoData(videoData: VideoData, title: string): Promise<string> {
     try {
       const db = await this.initDB();
       const transaction = db.transaction([this.videoStoreName], 'readwrite');
       const store = transaction.objectStore(this.videoStoreName);
       
+      // Extract thumbnail from the first point if available
+      const thumbnail = this.extractThumbnail(videoData);
+      
+      // Create a unique ID that includes timestamp to prevent ID reuse
+      const uniqueId = `video_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      
       const videoObject = {
+        uniqueId,
         videoData,
         title,
         timestamp: Date.now(),
-        thumbnail: this.extractThumbnail(videoData)
+        thumbnail
       };
       
-      const request = store.add(videoObject);
-      
       return new Promise((resolve, reject) => {
+        const request = store.add(videoObject);
+        
         request.onsuccess = () => {
-          const id = request.result as number;
-          console.log(`Video data stored in IndexedDB with ID: ${id}`);
-          resolve(id);
+          console.log(`Video stored in IndexedDB with ID: ${uniqueId}`);
+          
+          // Wait for transaction to complete before resolving
+          transaction.oncomplete = () => {
+            console.log(`Video storage transaction completed for ID: ${uniqueId}`);
+            resolve(uniqueId);
+          };
         };
         
         request.onerror = (event) => {
-          console.error('Error storing video data in IndexedDB:', event);
-          reject(new Error('Failed to store video data'));
+          console.error('Error storing video in IndexedDB:', event);
+          reject(new Error('Failed to store video'));
+        };
+        
+        transaction.onerror = (event) => {
+          console.error('Transaction error when storing video:', event);
+          reject(new Error('Transaction failed when storing video'));
         };
       });
     } catch (error) {
@@ -181,10 +198,10 @@ export class StorageService {
 
   /**
    * Get video data from IndexedDB
-   * @param id - ID of the video
+   * @param id - Unique ID of the video
    * @returns Promise that resolves with the video data or null if not found
    */
-  public async getVideoData(id: number): Promise<{ videoData: VideoData, title: string, timestamp: number, thumbnail: string } | null> {
+  public async getVideoData(id: string): Promise<{ uniqueId: string, videoData: VideoData, title: string, timestamp: number, thumbnail: string } | null> {
     try {
       const db = await this.initDB();
       const transaction = db.transaction([this.videoStoreName], 'readonly');
@@ -219,26 +236,70 @@ export class StorageService {
    * Get all videos from IndexedDB
    * @returns Promise that resolves with an array of all videos
    */
-  public async getAllVideos(): Promise<Array<{ id: number, videoData: VideoData, title: string, timestamp: number, thumbnail: string }>> {
+  public async getAllVideos(): Promise<Array<{ uniqueId: string, videoData: VideoData, title: string, timestamp: number, thumbnail: string }>> {
     try {
       const db = await this.initDB();
       const transaction = db.transaction([this.videoStoreName], 'readonly');
       const store = transaction.objectStore(this.videoStoreName);
       
-      const request = store.index('timestamp').openCursor(null, 'prev'); // Sort by timestamp descending
-      const videos: Array<{ id: number, videoData: VideoData, title: string, timestamp: number, thumbnail: string }> = [];
+      // Define our result array with the correct type
+      const result: Array<{ uniqueId: string, videoData: VideoData, title: string, timestamp: number, thumbnail: string }> = [];
       
+      // Get all records
       return new Promise((resolve, reject) => {
+        const request = store.index('timestamp').openCursor(null, 'prev'); // Sort by timestamp descending
+        
         request.onsuccess = (event) => {
           const cursor = (event.target as IDBRequest).result as IDBCursorWithValue;
+          
           if (cursor) {
-            const video = cursor.value;
-            video.id = cursor.key as number;
-            videos.push(video);
+            const record = cursor.value;
+            
+            // Check if this is an old format record (with id instead of uniqueId)
+            if (!record.uniqueId && 'id' in record) {
+              // Create a new record with the new format
+              const newFormatRecord = {
+                uniqueId: `video_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+                videoData: record.videoData,
+                title: record.title || 'Untitled Video',
+                timestamp: record.timestamp || Date.now(),
+                thumbnail: record.thumbnail || ''
+              };
+              
+              // Add to our result array
+              result.push(newFormatRecord);
+              
+              // Schedule an update to convert the old record to the new format
+              // We do this in a timeout to avoid interfering with the cursor
+              setTimeout(() => {
+                try {
+                  if (this.db) {
+                    const updateTx = this.db.transaction([this.videoStoreName], 'readwrite');
+                    const updateStore = updateTx.objectStore(this.videoStoreName);
+                    
+                    // Delete the old record
+                    const deleteRequest = updateStore.delete(cursor.key);
+                    deleteRequest.onsuccess = () => {
+                      // Add the new format record
+                      updateStore.add(newFormatRecord);
+                      console.log(`Converted old format video to new format with ID: ${newFormatRecord.uniqueId}`);
+                    };
+                  }
+                } catch (error) {
+                  console.error('Error converting old format record:', error);
+                }
+              }, 100);
+            } else if (record.uniqueId) {
+              // This is already in the new format
+              result.push(record as { uniqueId: string, videoData: VideoData, title: string, timestamp: number, thumbnail: string });
+            }
+            
+            // Move to the next record
             cursor.continue();
           } else {
-            console.log(`Retrieved ${videos.length} videos from IndexedDB`);
-            resolve(videos);
+            // No more records
+            console.log(`Retrieved ${result.length} videos from IndexedDB`);
+            resolve(result);
           }
         };
         
@@ -255,10 +316,10 @@ export class StorageService {
 
   /**
    * Delete a video from IndexedDB
-   * @param id - ID of the video to delete
+   * @param id - Unique ID of the video to delete
    * @returns Promise that resolves when the video is deleted
    */
-  public async deleteVideo(id: number): Promise<void> {
+  public async deleteVideo(id: string): Promise<void> {
     try {
       const db = await this.initDB();
       const transaction = db.transaction([this.videoStoreName], 'readwrite');
@@ -267,14 +328,31 @@ export class StorageService {
       const request = store.delete(id);
       
       return new Promise((resolve, reject) => {
+        // Listen for both request success and transaction completion
         request.onsuccess = () => {
-          console.log(`Video deleted from IndexedDB: ${id}`);
-          resolve();
+          console.log(`Video deletion request successful for ID: ${id}`);
+          // We don't resolve here - we wait for transaction to complete
         };
         
         request.onerror = (event) => {
           console.error('Error deleting video from IndexedDB:', event);
           reject(new Error('Failed to delete video'));
+        };
+        
+        // Add transaction complete handler to ensure data is actually committed
+        transaction.oncomplete = () => {
+          console.log(`Video deletion transaction completed for ID: ${id}`);
+          resolve();
+        };
+        
+        transaction.onerror = (event) => {
+          console.error('Transaction error when deleting video:', event);
+          reject(new Error('Transaction failed when deleting video'));
+        };
+        
+        transaction.onabort = (event) => {
+          console.error('Transaction aborted when deleting video:', event);
+          reject(new Error('Transaction aborted when deleting video'));
         };
       });
     } catch (error) {

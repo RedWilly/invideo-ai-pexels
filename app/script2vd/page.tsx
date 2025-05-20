@@ -4,11 +4,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Dialog } from '@/components/ui/dialog';
-import { Volume2 } from 'lucide-react';
 
 import { PageContainer } from '@/components/layout';
 import { ScriptInput, VoiceSelector, GenerationProgress } from '@/components/features/video-generator';
@@ -24,6 +22,7 @@ export default function Script2VD() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  //todo: create it own types... & modula approach
   const voices = [
     { id: 'OA001', name: 'James', description: 'Professional male voice' },
     { id: 'OA002', name: 'Emma', description: 'Friendly female voice' },
@@ -45,16 +44,20 @@ export default function Script2VD() {
         }
       }, 500);
       
-      // Call the API endpoint with the script and selected voice
-      // Format matches the backend's expected structure
+      /** Call the API endpoint with the script and selected voice
+       *  Format matches the backend's expected structure
+       *  script: string
+       *  tags: string
+       *  voiceId: string
+      */
       const response = await fetch('/api/process', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          script: script, // Send script exactly as entered
-          tags: tags, // Send as a single string, our API will convert to the tag format
+          script: script,
+          tags: tags,
           voiceId: selectedVoice
         }),
       });
