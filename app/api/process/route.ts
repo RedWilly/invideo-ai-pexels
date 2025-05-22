@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Prepare the request to the backend service
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_API || 'http://localhost:3001';
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_API;
     const backendEndpoint = `${backendUrl}/process-script`;
 
     console.log(`Sending request to backend at ${backendEndpoint}`);
