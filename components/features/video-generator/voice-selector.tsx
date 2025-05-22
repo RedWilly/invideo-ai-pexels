@@ -2,12 +2,7 @@
 
 import { useState } from 'react';
 import { Card } from '@/components/ui/card';
-
-interface Voice {
-  id: string;
-  name: string;
-  description: string;
-}
+import { Voice } from '@/lib/types/voice';
 
 interface VoiceSelectorProps {
   voices: Voice[];

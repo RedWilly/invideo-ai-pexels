@@ -1,15 +1,17 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 // This is needed for API routes in Next.js
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     console.log('Received POST request to /api/process');
     
+    // Parse the request body
     const body = await request.json();
     console.log('Request body:', body);
 
+    // Validate the request body
     if (!body.script || !body.voiceId) {
       console.log('Validation failed: Missing required fields');
       return NextResponse.json(
@@ -24,72 +26,54 @@ export async function POST(request: Request) {
       tags: body.tags
     });
 
-    // Format the request for the backend service
+    // Prepare the request to the backend service
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_API || 'http://localhost:3001';
+    const backendEndpoint = `${backendUrl}/process-script`;
+
+    console.log(`Sending request to backend at ${backendEndpoint}`);
+
+    // Format the request to match the backend's expected structure
     const backendRequest = {
       script: body.script,
-      tag: body.tags, // Convert tags to tag for backend
+      tags: body.tags || '',
       voiceId: body.voiceId,
-      generateVoiceOver: true,
-      syncAudio: true
-    };
-    
-    console.log('Sending to backend:', backendRequest);
-
-    try {
-      console.log('Sending request to backend at http://localhost:3001/process-script');
-      
-      const backendResponse = await fetch('http://localhost:3001/process-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(backendRequest),
-        cache: 'no-store'
-      });
-
-      console.log('Backend response status:', backendResponse.status);
-      
-      if (!backendResponse.ok) {
-        const errorText = await backendResponse.text();
-        console.error('Backend error response:', errorText);
-        throw new Error(`Backend service returned ${backendResponse.status}: ${errorText}`);
+      options: {
+        generateVoiceOver: true,
+        syncAudio: true
       }
+    };
 
-      const data = await backendResponse.json();
-      console.log('Successfully received data from backend');
-      return NextResponse.json(data);
-    } catch (error) {
-      console.error('Error calling backend service:', error);
-      
-      // For testing purposes, return mock data if backend is unavailable
-      console.log('Returning mock data as fallback');
-      return NextResponse.json({
-        success: true,
-        data: [
-          {
-            "sectionId": "section1",
-            "points": [
-              {
-                "text": "Welcome to a journey through time that stretches far beyond human memory",
-                "videoId": "3156517",
-                "videoUrl": "https://videos.pexels.com/video-files/3156517/pexels-nothing-ahead-3156517.mp4",
-                "videoThumbnail": "https://images.pexels.com/videos/3156517/free-video-3156517.jpg",
-                "startTime": 0,
-                "endTime": 5000
-              },
-              {
-                "text": "Long before our ancestors walked upright, the universe was crafting a story",
-                "videoId": "1409899",
-                "videoUrl": "https://videos.pexels.com/video-files/1409899/pexels-ruvim-miksanskiy-1409899.mp4",
-                "videoThumbnail": "https://images.pexels.com/videos/1409899/free-video-1409899.jpg",
-                "startTime": 5000,
-                "endTime": 10000
-              }
-            ],
-            "audioUrl": "https://example.com/audio1.mp3",
-            "voiceOverId": "test-voice-id"
-          }
-        ]
-      });
+    console.log('Backend request:', backendRequest);
+
+    // Send the request to the backend service
+    const backendResponse = await fetch(backendEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(backendRequest),
+    });
+
+    console.log(`Backend response status: ${backendResponse.status}`);
+
+    // Check if the response is successful (201 Created is expected for job creation)
+    if (!backendResponse.ok) {
+      const errorText = await backendResponse.text();
+      console.error('Backend error response:', errorText);
+      throw new Error(`Backend service returned ${backendResponse.status}: ${errorText}`);
     }
+
+    // The response should now contain a jobId instead of the full video data
+    const jobResponse = await backendResponse.json();
+    console.log('Backend job response:', jobResponse);
+    
+    if (!jobResponse.jobId) {
+      throw new Error('Backend did not return a valid jobId');
+    }
+    
+    // Return the job response with the jobId
+    console.log(`Successfully received jobId: ${jobResponse.jobId}`);
+    return NextResponse.json(jobResponse);
   } catch (error) {
     console.error('Error processing request:', error);
     return NextResponse.json(

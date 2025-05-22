@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Dialog } from '@/components/ui/dialog';
+import { websocketService, JobStatus, JobUpdate } from '@/lib/services/websocket-service';
+import { VoiceOptions } from '@/lib/types/voice';
 
 import { PageContainer } from '@/components/layout';
 import { ScriptInput, VoiceSelector, GenerationProgress } from '@/components/features/video-generator';
@@ -21,29 +23,75 @@ export default function Script2VD() {
   const [selectedVoice, setSelectedVoice] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [jobStatus, setJobStatus] = useState<JobStatus>('queued');
+  const [jobMessage, setJobMessage] = useState<string>('');
+  const [jobError, setJobError] = useState<string>('');
+  const [jobId, setJobId] = useState<string>('');
 
-  //todo: create it own types... & modula approach
-  const voices = [
-    { id: 'OA001', name: 'James', description: 'Professional male voice' },
-    { id: 'OA002', name: 'Emma', description: 'Friendly female voice' },
-    { id: 'OA003', name: 'Michael', description: 'Authoritative male voice' },
-    { id: 'OA004', name: 'Sarah', description: 'Warm female voice' },
-    { id: 'OA007', name: 'David', description: 'Narrative male voice' },
-  ];
+  // Use the voice options from the types file
+  const voices = VoiceOptions;
+
+  // Set up WebSocket listeners when job ID changes
+  useEffect(() => {
+    if (!jobId) return;
+    
+    // Connect to WebSocket for this job
+    websocketService.connect(jobId);
+    
+    // Handle job updates
+    const handleUpdate = (update: JobUpdate) => {
+      console.log('Job update received:', update);
+      setJobStatus(update.status);
+      setProgress(update.progress);
+      if (update.message) {
+        setJobMessage(update.message);
+      }
+      
+      // If job is completed, save the result and redirect
+      if (update.status === 'completed' && update.result) {
+        setVideoData({
+          success: update.result.success,
+          data: update.result.data
+        });
+        
+        // Wait a moment before redirecting
+        setTimeout(() => {
+          router.push('/complete');
+        }, 1000);
+      }
+      
+      // If job failed, show error
+      if (update.status === 'failed') {
+        setJobError(update.message || 'An error occurred during video generation');
+      }
+    };
+    
+    // Handle WebSocket errors
+    const handleError = (error: any) => {
+      console.error('WebSocket error:', error);
+      setJobError(error.message || 'Connection error');
+    };
+    
+    // Register listeners
+    websocketService.on('update', handleUpdate);
+    websocketService.on('error', handleError);
+    
+    // Clean up listeners when component unmounts or jobId changes
+    return () => {
+      websocketService.off('update', handleUpdate);
+      websocketService.off('error', handleError);
+      websocketService.disconnect();
+    };
+  }, [jobId, router, setVideoData]);
 
   const handleSubmit = async () => {
     setIsGenerating(true);
+    setJobStatus('queued');
+    setProgress(0);
+    setJobMessage('Submitting your request...');
+    setJobError('');
     
     try {
-      // Start progress animation
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 5;
-        if (progress <= 90) {
-          setProgress(progress);
-        }
-      }, 500);
-      
       /** Call the API endpoint with the script and selected voice
        *  Format matches the backend's expected structure
        *  script: string
@@ -62,24 +110,26 @@ export default function Script2VD() {
         }),
       });
       
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Server responded with status ${response.status}`);
+      }
+      
       const result = await response.json();
       
-      // Save the video data in context
-      setVideoData(result);
+      if (!result.jobId) {
+        throw new Error('No job ID returned from server');
+      }
       
-      // Complete the progress bar
-      clearInterval(interval);
-      setProgress(100);
-      
-      // Wait a moment before redirecting
-      setTimeout(() => {
-        router.push('/complete');
-      }, 500);
+      console.log('Job created with ID:', result.jobId);
+      setJobId(result.jobId);
+      setJobMessage('Job created, connecting to updates...');
       
     } catch (error) {
-      console.error('Error generating video:', error);
-      // Handle error - could show an error message to the user
-      setIsGenerating(false);
+      console.error('Error submitting video generation job:', error);
+      setJobError(error instanceof Error ? error.message : 'An unknown error occurred');
+      setJobStatus('failed');
+      // Keep dialog open so user can see the error
     }
   };
 
@@ -141,11 +191,21 @@ export default function Script2VD() {
       </Tabs>
 
       <Dialog open={isGenerating} onOpenChange={(open) => {
-        // Only allow closing programmatically, not by user action
-        if (!open && isGenerating) return;
+        // Only allow closing programmatically when job is not completed or failed
+        if (!open && isGenerating && jobStatus !== 'completed' && jobStatus !== 'failed') return;
         setIsGenerating(open);
+        
+        // If manually closed, disconnect from WebSocket
+        if (!open) {
+          websocketService.disconnect();
+        }
       }}>
-        <GenerationProgress progress={progress} />
+        <GenerationProgress 
+          progress={progress} 
+          status={jobStatus}
+          message={jobMessage}
+          error={jobError}
+        />
       </Dialog>
     </PageContainer>
   );
